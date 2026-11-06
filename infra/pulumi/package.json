@@ -1,0 +1,10 @@
+{
+  "name": "asistencia-cloud-init-pulumi",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "@pulumi/aws": "7.53.0",
+    "@pulumi/pulumi": "3.274.1"
+  }
+}

@@ -1,0 +1,46 @@
+# Credenciales y configuración local
+.aws/
+.env
+.env.*
+!.env.example
+!.env.*.example
+credentials
+credentials.json
+
+# Llaves y frases de cifrado
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+id_dsa
+globomatics
+globomatics-ec2
+passphrase
+admin-password
+
+# Archivos locales de preparación y estado de infraestructura
+.asistencia/
+.pulumi/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+backend_override.tf
+crash.log
+crash.*.log
+Pulumi.*.yaml
+Pulumi.*.yml
+Pulumi.*.yaml.bak*
+Pulumi.*.yml.bak*
+stack-export*.json
+
+# Copias de la base y documentación histórica con datos del entorno
+*.sql.gz
+globomatics-backup*
+/app/docs/despliegue-manual-aws.md

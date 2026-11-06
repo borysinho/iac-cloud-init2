@@ -1,0 +1,99 @@
+@startuml arquitectura
+title Control de asistencia - Tres capas y despliegue independiente
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam packageStyle rectangle
+
+actor "Estudiante / Administrador" as User
+
+node "Servidor cliente" as Client {
+  package "1. Presentación - Cliente ligero" #EAF2FF {
+    component "Nginx\nArchivos estáticos y proxy /api\nPuerto 80" as Front
+    component "Navegador\npublic/index.html\npublic/styles.css\npublic/app.js" as Browser
+    artifact "asistencia.conf\nproxy_pass" as FrontConfig
+  }
+}
+
+node "Servidor backend" as Backend {
+  frame "Proceso Node.js - API, puerto 8090" {
+    package "1. Presentación - Adaptador HTTP" #EAF2FF {
+      component "Express\nsrc/presentation/app.js\nRutas, sesión Bearer, CORS\ny traducción de errores a HTTP" as API
+    }
+
+    package "2. Negocio" #EAF8EF {
+      interface "Contrato de servicio\nlogin / dashboard / mark / correct\nactivities / prepareImport / activate\ntemplate / export" as ServicePort
+      component "Casos de uso y permisos\nsrc/services/attendance.js\ncreateAttendanceService(...)" as Service
+      component "Reglas de asistencia\nsrc/services/rules.js\nFecha institucional\nFalta / Pendiente / Presente" as Rules
+      interface "Contrato de repositorio\nConsultas y escritura por operación\ntransaction(callback)" as RepositoryPort
+      component "Funciones auxiliares inyectadas\nimports.js: validación y generación Excel\nsecurity.js: verificación de contraseña\nReloj institucional" as Helpers
+    }
+
+    package "3. Datos - Adaptador de persistencia" #FFF3DE {
+      component "Repositorio MySQL\nsrc/repositories/asistencia.js\nConsultas parametrizadas y bloqueos" as Repository
+      component "Pool y transacciones\nsrc/repositories/database.js\nmysql2/promise\nCommit / Rollback" as Connection
+    }
+
+    component "Composición y arranque\nsrc/server.js\nConecta contratos e implementaciones" as Bootstrap
+  }
+
+  database "MySQL - Proceso separado\nPuerto 3306\ndatabase/schema.sql\nEstudiantes, módulos, fechas,\nasistencias y actividades" as DB #FFF3DE
+  artifact ".env.backend\nFRONTEND_ORIGINS\nConexión MySQL" as BackendConfig
+}
+
+User --> Browser
+Browser --> Front : GET archivos y /config.js
+FrontConfig --> Front : Configuración pública
+Front --> API : Proxy /api a IP_BACKEND:8090\nJSON, multipart y Excel\nAuthorization: Bearer TOKEN
+API --> ServicePort : Invoca casos de uso
+Service ..|> ServicePort : Implementa
+Service --> Rules
+Service --> Helpers : Funciones inyectadas
+Service --> RepositoryPort : Persistencia por contrato
+Repository ..|> RepositoryPort : Implementa
+Repository --> Connection
+Connection --> DB : SQL / TCP\n127.0.0.1:3306
+BackendConfig --> Bootstrap
+Bootstrap ..> API : Crea aplicación HTTP
+Bootstrap ..> Service : Inyecta dependencias
+Bootstrap ..> Repository : Selecciona adaptador
+Bootstrap ..> Helpers : Selecciona funciones
+
+note bottom of Front
+  Servicio Nginx
+  Sirve archivos estáticos y reenvía /api.
+  Puede iniciarse sin backend ni MySQL.
+  El navegador usa /api en su mismo origen.
+end note
+
+note bottom of Service
+  RF-04: fecha pasada sin marca = Falta.
+  La misma regla se aplica a panel y exportación.
+  Negocio valida roles, fechas, marca única,
+  corrección auditada y activación confirmada.
+  No importa Express ni el adaptador MySQL.
+end note
+
+note bottom of DB
+  MySQL es un servicio interno del servidor backend.
+  npm run db:init crea esquema y administrador
+  sin borrar datos existentes.
+  La interfaz no accede directamente a MySQL.
+end note
+
+note top of Bootstrap
+  Servicio asistencia (Node.js) y servicio MySQL
+  FRONTEND_ORIGINS autoriza el origen exacto del cliente.
+  Las sesiones y borradores se conservan en memoria de la API.
+end note
+
+legend bottom left
+  Azul: presentación; verde: negocio; amarillo: datos.
+  Flecha continua: uso o comunicación.
+  Flecha discontinua: composición o implementación de contrato.
+  Tres capas lógicas en dos servidores; API y MySQL en backend.
+  Puertos indicados: valores predeterminados configurables.
+endlegend
+@enduml

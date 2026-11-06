@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Laboratorio Asistencia en una subred publica con dos EC2 y cloud-init compartido.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    why: Aprovisiona el cliente web y el backend con MySQL local.
+    must: Conserva las IP privadas que usa cloud-init y limita SSH a la IPv4 del operador.
+
+Parameters:
+  UbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id
+  LlaveSsh:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: globomatics
+
+Resources:
+  # @red.yaml
+
+  # @computo.yaml
+
+Outputs:
+  IpCliente:
+    Value: !GetAtt Cliente.PublicIp
+  IpBackend:
+    Value: !GetAtt Backend.PublicIp
+  UrlCliente:
+    Value: !Sub 'http://${Cliente.PublicIp}'

@@ -1,0 +1,23 @@
+[Unit]
+Description=API de control de asistencia
+Wants=network-online.target
+After=network-online.target mysql.service mysqld.service
+
+[Service]
+Type=simple
+User=asistencia
+Group=asistencia
+WorkingDirectory=/opt/asistencia
+# Ajustar la ruta absoluta de Node.js a la instalacion del servidor.
+ExecStart=/usr/bin/node --env-file=/opt/asistencia/.env.backend /opt/asistencia/src/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

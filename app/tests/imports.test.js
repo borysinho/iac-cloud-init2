@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import ExcelJS from 'exceljs';
+import {parseExcel,workbookBuffer} from '../src/services/imports.js';
+test('Importa registros de texto conservando ceros',async()=>{const b=await workbookBuffer('students',[['00100','Ana Pérez','ana@example.com']]);assert.equal((await parseExcel(b,'students'))[0].registration,'00100');});
+test('Rechaza registros duplicados y correos inválidos sin importar parcialmente',async()=>{const b=await workbookBuffer('students',[['100','Ana','ana@example.com'],['100','Otra','otra@example.com'],['200','Luis','incorrecto']]);await assert.rejects(()=>parseExcel(b,'students'),e=>e.details.length===2);});
+test('Valida fechas reales y orden de horarios',async()=>{const b=await workbookBuffer('dates',[['31/02/2026','18:00','21:00'],['2026-10-13','21:00','18:00']]);await assert.rejects(()=>parseExcel(b,'dates'),e=>e.details.length===2);});
+test('Importa fechas DD/MM/AAAA con horario informativo',async()=>{const b=await workbookBuffer('dates',[['13/10/2026','18:00','21:00']]);assert.deepEqual(await parseExcel(b,'dates'),[{date:'2026-10-13',start:'18:00',end:'21:00'}]);});
+test('Rechaza fórmulas',async()=>{const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet('Datos');ws.addRow(['Número de registro','Nombre completo','Correo electrónico']);ws.addRow([{formula:'1+1',result:2},'Ana','ana@example.com']);const buffer=await wb.xlsx.writeBuffer();await assert.rejects(()=>parseExcel(buffer,'students'),e=>e.details[0].includes('fórmulas'));});
+test('Rechaza encabezados incorrectos',async()=>{const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet('Datos');ws.addRow(['Registro incorrecto','Nombre','Correo']);ws.addRow(['1','Ana','ana@example.com']);const buffer=await wb.xlsx.writeBuffer();await assert.rejects(()=>parseExcel(buffer,'students'),/Encabezados esperados/);});

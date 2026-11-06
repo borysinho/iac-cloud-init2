@@ -1,0 +1,3 @@
+name: asistencia-cloud-init
+runtime: nodejs
+description: Laboratorio Asistencia en AWS con dos instancias EC2 y cloud-init.

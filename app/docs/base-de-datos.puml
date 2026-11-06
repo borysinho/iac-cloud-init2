@@ -1,0 +1,115 @@
+@startuml base_de_datos
+title Control de asistencia - Modelo físico de MySQL
+
+hide circle
+skinparam linetype ortho
+skinparam shadowing false
+skinparam entityBackgroundColor #F2F6FC
+skinparam entityBorderColor #123B70
+skinparam defaultFontName SansSerif
+
+' Fuente: database/schema.sql. Los nombres corresponden a las tablas reales.
+entity "administrators" as administrators {
+  * id : INT <<PK, AUTO_INCREMENT>>
+  --
+  * username : VARCHAR(100) <<UNIQUE>>
+  * password_hash : VARCHAR(255)
+}
+
+entity "modules" as modules {
+  * id : INT <<PK, AUTO_INCREMENT>>
+  --
+  * name : VARCHAR(150)
+  * active : TINYINT = 0
+  active_slot : TINYINT <<GENERATED, UNIQUE>>
+  created_at : DATETIME = CURRENT_TIMESTAMP
+}
+
+entity "students" as students {
+  * id : INT <<PK, AUTO_INCREMENT>>
+  --
+  * module_id : INT <<FK>>
+  * registration : VARCHAR(50)
+  * name : VARCHAR(180)
+  * email : VARCHAR(200)
+  --
+  UNIQUE (module_id, registration)
+  UNIQUE (id, module_id)
+}
+
+entity "class_dates" as class_dates {
+  * id : INT <<PK, AUTO_INCREMENT>>
+  --
+  * module_id : INT <<FK>>
+  * class_date : DATE
+  * start_time : TIME
+  * end_time : TIME
+  --
+  UNIQUE (module_id, class_date)
+  UNIQUE (id, module_id)
+}
+
+entity "attendances" as attendances {
+  * id : INT <<PK, AUTO_INCREMENT>>
+  --
+  * module_id : INT <<FK>>
+  * student_id : INT <<FK compuesto>>
+  * class_date_id : INT <<FK compuesto>>
+  * status : ENUM('Presente', 'Falta')
+  marked_at : DATETIME <<NULL permitido>>
+  * updated_at : DATETIME
+  --
+  UNIQUE (student_id, class_date_id)
+}
+
+entity "activities" as activities {
+  * id : INT <<PK, AUTO_INCREMENT>>
+  --
+  * module_id : INT <<FK>>
+  * actor : VARCHAR(180)
+  student_id : INT <<FK, NULL permitido>>
+  * action : VARCHAR(100)
+  affected : VARCHAR(150)
+  previous_value : VARCHAR(50)
+  new_value : VARCHAR(50)
+  * created_at : DATETIME
+  --
+  INDEX (module_id, created_at)
+}
+
+modules ||--o{ students : module_id
+modules ||--o{ class_dates : module_id
+modules ||--o{ attendances : module_id
+modules ||--o{ activities : module_id
+students ||--o{ attendances : (student_id, module_id)\nREFERENCES (id, module_id)
+class_dates ||--o{ attendances : (class_date_id, module_id)\nREFERENCES (id, module_id)
+students |o--o{ activities : student_id opcional
+
+note top of modules
+  active_slot = IF(active = 1, 1, NULL)
+  Su unicidad permite como máximo un módulo activo.
+  La activación del nuevo módulo conserva los anteriores.
+end note
+
+note bottom of attendances
+  Las claves foráneas compuestas obligan a que
+  estudiante, fecha y asistencia sean del mismo módulo.
+
+  RF-04: una fecha pasada sin registro se interpreta
+  como Falta al consultar o exportar, en negocio.
+  No se inserta automáticamente una fila de ausencia.
+  Pendiente es un estado derivado y no pertenece al ENUM.
+end note
+
+note bottom of administrators
+  activities.actor almacena un identificador textual.
+  No existe una FK desde activities a administrators.
+end note
+
+legend bottom left
+  * = columna obligatoria (NOT NULL o PK)
+  PK = clave primaria; FK = clave foránea
+  Las columnas sin * admiten NULL según el esquema.
+  Las relaciones representan restricciones reales de MySQL.
+endlegend
+@enduml

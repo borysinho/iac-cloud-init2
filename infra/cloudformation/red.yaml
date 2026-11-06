@@ -1,0 +1,108 @@
+# Red
+Vpc:
+  Type: AWS::EC2::VPC
+  Metadata:
+    com.aws.cloudformation.Context: {why: Red del laboratorio, must: Mantener el rango privado de las EC2.}
+  Properties:
+    CidrBlock: 10.42.0.0/16
+    EnableDnsSupport: true
+    EnableDnsHostnames: true
+    Tags:
+      - Key: Name
+        Value: asistencia
+
+SubredPublica:
+  Type: AWS::EC2::Subnet
+  Metadata:
+    com.aws.cloudformation.Context: {why: Aloja ambas EC2, must: Incluir 10.42.1.10 y 10.42.1.20.}
+  Properties:
+    VpcId: !Ref Vpc
+    CidrBlock: 10.42.1.0/24
+    Tags:
+      - Key: Name
+        Value: asistencia-publica
+
+Internet:
+  Type: AWS::EC2::InternetGateway
+  Metadata:
+    com.aws.cloudformation.Context: {why: Permite la salida de las EC2 a Internet.}
+  Properties:
+    Tags:
+      - Key: Name
+        Value: asistencia
+
+ConexionInternet:
+  Type: AWS::EC2::VPCGatewayAttachment
+  Metadata:
+    com.aws.cloudformation.Context: {why: Conecta la puerta de enlace a la VPC.}
+  Properties:
+    VpcId: !Ref Vpc
+    InternetGatewayId: !Ref Internet
+
+TablaPublica:
+  Type: AWS::EC2::RouteTable
+  Metadata:
+    com.aws.cloudformation.Context: {why: Administra las rutas de la subred pública.}
+  Properties:
+    VpcId: !Ref Vpc
+    Tags:
+      - Key: Name
+        Value: asistencia-publica
+
+RutaInternet:
+  Type: AWS::EC2::Route
+  DependsOn: ConexionInternet
+  Metadata:
+    com.aws.cloudformation.Context: {why: Habilita descargas y acceso público al cliente.}
+  Properties:
+    RouteTableId: !Ref TablaPublica
+    DestinationCidrBlock: 0.0.0.0/0
+    GatewayId: !Ref Internet
+
+AsociacionSubred:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Metadata:
+    com.aws.cloudformation.Context: {why: Aplica la tabla de rutas a la subred.}
+  Properties:
+    SubnetId: !Ref SubredPublica
+    RouteTableId: !Ref TablaPublica
+
+GrupoCliente:
+  Type: AWS::EC2::SecurityGroup
+  Metadata:
+    com.aws.cloudformation.Context: {why: Expone el sitio web, must: SSH limitado a la IPv4 del operador.}
+  Properties:
+    GroupDescription: Acceso de red para el cliente
+    VpcId: !Ref Vpc
+    SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: __SSH_CIDR__
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+    SecurityGroupEgress:
+      - IpProtocol: '-1'
+        CidrIp: 0.0.0.0/0
+
+GrupoBackend:
+  Type: AWS::EC2::SecurityGroup
+  Metadata:
+    com.aws.cloudformation.Context: {why: Protege la API, must: TCP 8090 accesible desde el grupo del cliente.}
+  Properties:
+    GroupDescription: Acceso de red para el backend
+    VpcId: !Ref Vpc
+    SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: __SSH_CIDR__
+      - IpProtocol: tcp
+        FromPort: 8090
+        ToPort: 8090
+        SourceSecurityGroupId: !Ref GrupoCliente
+    SecurityGroupEgress:
+      - IpProtocol: '-1'
+        CidrIp: 0.0.0.0/0

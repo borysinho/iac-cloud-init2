@@ -1,0 +1,97 @@
+# Cómputo y acceso al paquete
+RolDescarga:
+  Type: AWS::IAM::Role
+  Metadata:
+    com.aws.cloudformation.Context: {why: Las EC2 descargan la aplicación desde S3, must: Limitar lectura al objeto del paquete.}
+  Properties:
+    AssumeRolePolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Action: sts:AssumeRole
+          Principal:
+            Service: ec2.amazonaws.com
+    Policies:
+      - PolicyName: DescargaPaquete
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub 'arn:${AWS::Partition}:s3:::__BUCKET_APP__/__CLAVE_APP__'
+
+PerfilDescarga:
+  Type: AWS::IAM::InstanceProfile
+  Metadata:
+    com.aws.cloudformation.Context: {why: Entrega el rol de descarga a las instancias.}
+  Properties:
+    Roles:
+      - !Ref RolDescarga
+
+ConfiguracionEc2:
+  Type: AWS::EC2::LaunchTemplate
+  Metadata:
+    com.aws.cloudformation.Context: {why: Define la configuración común de las dos EC2, must: Usar IMDSv2 y disco raíz cifrado.}
+  Properties:
+    LaunchTemplateData:
+      CreditSpecification:
+        CpuCredits: standard
+      MetadataOptions:
+        HttpTokens: required
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            Encrypted: true
+            DeleteOnTermination: true
+
+Cliente:
+  Type: AWS::EC2::Instance
+  DependsOn: [RutaInternet, AsociacionSubred]
+  Metadata:
+    com.aws.cloudformation.Context: {why: Sirve la interfaz y actúa como proxy de la API, must: Usar 10.42.1.10.}
+  Properties:
+    ImageId: !Ref UbuntuAmi
+    InstanceType: t3.micro
+    KeyName: !Ref LlaveSsh
+    IamInstanceProfile: !Ref PerfilDescarga
+    LaunchTemplate:
+      LaunchTemplateId: !Ref ConfiguracionEc2
+      Version: !GetAtt ConfiguracionEc2.LatestVersionNumber
+    NetworkInterfaces:
+      - DeviceIndex: '0'
+        SubnetId: !Ref SubredPublica
+        PrivateIpAddress: 10.42.1.10
+        AssociatePublicIpAddress: true
+        GroupSet: [!Ref GrupoCliente]
+    UserData:
+      Fn::Base64: !Sub |
+        __CLOUD_INIT_CLIENTE__
+    Tags:
+      - Key: Name
+        Value: asistencia-cliente
+
+Backend:
+  Type: AWS::EC2::Instance
+  DependsOn: [RutaInternet, AsociacionSubred]
+  Metadata:
+    com.aws.cloudformation.Context: {why: Ejecuta la API y aloja MySQL en el disco raíz, must: Usar 10.42.1.20.}
+  Properties:
+    ImageId: !Ref UbuntuAmi
+    InstanceType: t3.small
+    KeyName: !Ref LlaveSsh
+    IamInstanceProfile: !Ref PerfilDescarga
+    LaunchTemplate:
+      LaunchTemplateId: !Ref ConfiguracionEc2
+      Version: !GetAtt ConfiguracionEc2.LatestVersionNumber
+    NetworkInterfaces:
+      - DeviceIndex: '0'
+        SubnetId: !Ref SubredPublica
+        PrivateIpAddress: 10.42.1.20
+        AssociatePublicIpAddress: true
+        GroupSet: [!Ref GrupoBackend]
+    UserData:
+      Fn::Base64: !Sub |
+        __CLOUD_INIT_BACKEND__
+    Tags:
+      - Key: Name
+        Value: asistencia-backend

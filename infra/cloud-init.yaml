@@ -1,0 +1,196 @@
+## template: jinja
+#cloud-config
+# UserData para Ubuntu 24.04 LTS (amd64).
+# Sustituir los marcadores antes de enviar el archivo a EC2:
+#   __ROL__: cliente o backend.
+#   __URL_APP__: URL HTTPS o URI s3:// del tar.gz de app/, con su contenido en la raíz.
+#   __REGION_APP__: región del bucket si se usa S3 con un perfil IAM en EC2.
+#   __ORIGEN_CLIENTE__: URL del sitio sin barra final (ej. http://203.0.113.10).
+# Las dos EC2 tienen IPv4 pública, comparten una subred y usan la clave globomatics.
+# IP privadas: cliente 10.42.1.10, backend 10.42.1.20.
+# Grupos de seguridad: SSH desde la IP pública del operador (/32), HTTP al
+# cliente y TCP 8090 al backend únicamente desde el grupo del cliente.
+{% set rol = '__ROL__' %}
+{% set paquete = '__URL_APP__' %}
+
+hostname: asistencia-{{ rol }}
+timezone: America/La_Paz
+ssh_pwauth: false
+package_update: true
+
+packages:
+  - ca-certificates
+  - curl
+{% if paquete.startswith('s3://') %}
+  - unzip
+{% endif %}
+{% if rol == 'cliente' %}
+  - nginx
+{% elif rol == 'backend' %}
+  - mysql-server
+  - openssl
+  - xz-utils
+{% endif %}
+
+{% if rol == 'cliente' %}
+write_files:
+  - path: /etc/nginx/sites-available/asistencia
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+          root /var/www/asistencia;
+          index index.html;
+          server_tokens off;
+          client_max_body_size 4m;
+
+          add_header X-Content-Type-Options nosniff always;
+          add_header Referrer-Policy no-referrer always;
+          add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" always;
+          expires -1;
+
+          location /api/ {
+              proxy_pass http://10.42.1.20:8090;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-For $remote_addr;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header Connection "";
+              proxy_connect_timeout 3s;
+              proxy_read_timeout 120s;
+          }
+
+          location / {
+              try_files $uri $uri/ =404;
+          }
+      }
+{% elif rol == 'backend' %}
+write_files:
+  - path: /etc/mysql/mysql.conf.d/zz-asistencia.cnf
+    content: |
+      [mysqld]
+      bind-address = 127.0.0.1
+      mysqlx = 0
+
+  - path: /etc/asistencia/backend.env
+    permissions: '0600'
+    content: |
+      BACKEND_HOST=10.42.1.20
+      PORT=8090
+      FRONTEND_ORIGINS=__ORIGEN_CLIENTE__
+      TRUSTED_PROXIES=10.42.1.10
+      DB_HOST=127.0.0.1
+      DB_PORT=3306
+      DB_USER=asistencia
+      DB_NAME=uagrm_asistencia
+      ADMIN_USER=admin
+      INSTITUTION_TIMEZONE=America/La_Paz
+
+  - path: /etc/systemd/system/asistencia.service
+    content: |
+      [Unit]
+      Description=API de control de asistencia
+      Wants=network-online.target
+      Requires=mysql.service
+      After=network-online.target mysql.service
+
+      [Service]
+      User=asistencia
+      Group=asistencia
+      WorkingDirectory=/opt/asistencia
+      EnvironmentFile=/etc/asistencia/backend.env
+      ExecStart=/opt/node/bin/node /opt/asistencia/src/server.js
+      Restart=on-failure
+      RestartSec=5
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectHome=true
+      ProtectSystem=strict
+
+      [Install]
+      WantedBy=multi-user.target
+{% endif %}
+
+runcmd:
+  - [set, -eu]
+{% if rol == 'cliente' or rol == 'backend' %}
+  # Descargar el paquete de la aplicación.
+  - [install, -d, -m, '0700', /run/asistencia]
+{% if paquete.startswith('s3://') %}
+  # Instalar AWS CLI y descargar el paquete con el perfil IAM de la instancia.
+  - |
+    (
+      temporal=$(mktemp -d /var/tmp/asistencia-awscli.XXXXXX)
+      trap 'rm -rf "$temporal"' EXIT
+      cd "$temporal"
+      curl -fsSL --retry 3 --proto '=https' -o awscliv2.zip https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+      unzip -q awscliv2.zip
+      ./aws/install
+    )
+  - |
+    intentos=0
+    until /usr/local/bin/aws s3 cp '__URL_APP__' /run/asistencia/app.tar.gz --region '__REGION_APP__' --only-show-errors; do
+      intentos=$((intentos + 1))
+      [ "$intentos" -lt 6 ] || exit 1
+      sleep 5
+    done
+{% else %}
+  - [curl, --fail, --silent, --show-error, --location, --retry, '3', --proto, '=https', --output, /run/asistencia/app.tar.gz, '__URL_APP__']
+{% endif %}
+  - [tar, -xzf, /run/asistencia/app.tar.gz, -C, /run/asistencia, --no-same-owner, --no-same-permissions]
+{% endif %}
+{% if rol == 'cliente' %}
+  # Publicar el cliente y activar el proxy hacia la API.
+  - [install, -d, /var/www/asistencia]
+  - [install, -m, '0644', /run/asistencia/public/index.html, /run/asistencia/public/app.js, /run/asistencia/public/styles.css, /run/asistencia/public/config.js, /var/www/asistencia/]
+  - [rm, -f, /etc/nginx/sites-enabled/default]
+  - [ln, -sfn, /etc/nginx/sites-available/asistencia, /etc/nginx/sites-enabled/asistencia]
+  - [nginx, -t]
+  - [systemctl, enable, nginx]
+  - [systemctl, restart, nginx]
+{% elif rol == 'backend' %}
+  # Instalar Node.js y las dependencias de la API.
+  - |
+    version=v24.21.0
+    archivo="node-$version-linux-x64.tar.xz"
+    cd /run/asistencia
+    curl -fsSL --retry 3 -O "https://nodejs.org/dist/$version/$archivo"
+    curl -fsSL --retry 3 -O "https://nodejs.org/dist/$version/SHASUMS256.txt"
+    awk -v archivo="$archivo" '$2 == archivo' SHASUMS256.txt > node.sha256
+    sha256sum --check node.sha256
+    install -d /opt/node
+    tar -xJf "$archivo" -C /opt/node --strip-components=1
+  - [useradd, --system, --user-group, --home-dir, /opt/asistencia, --shell, /usr/sbin/nologin, asistencia]
+  - [install, -d, /opt/asistencia]
+  - [cp, -R, /run/asistencia/package.json, /run/asistencia/package-lock.json, /run/asistencia/src, /run/asistencia/scripts, /run/asistencia/database, /opt/asistencia/]
+  - [env, 'PATH=/opt/node/bin:/usr/bin:/bin', /opt/node/bin/npm, --prefix, /opt/asistencia, ci, --omit=dev]
+
+  # Crear las credenciales en el backend e inicializar MySQL.
+  - [systemctl, enable, mysql]
+  - [systemctl, restart, mysql]
+  - |
+    umask 077
+    admin_password_file=/etc/asistencia/admin-password
+    if [ ! -s "$admin_password_file" ]; then
+      openssl rand -hex 24 > "$admin_password_file"
+    fi
+    db_password=$(openssl rand -hex 24)
+    mysql <<SQL
+    CREATE DATABASE IF NOT EXISTS uagrm_asistencia
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE USER IF NOT EXISTS 'asistencia'@'127.0.0.1' IDENTIFIED BY '$db_password';
+    ALTER USER 'asistencia'@'127.0.0.1' IDENTIFIED BY '$db_password';
+    GRANT ALL PRIVILEGES ON uagrm_asistencia.* TO 'asistencia'@'127.0.0.1';
+    SQL
+    printf '\nDB_PASSWORD=%s\n' "$db_password" >> /etc/asistencia/backend.env
+    ADMIN_PASSWORD="$(cat "$admin_password_file")" \
+      /opt/node/bin/node --env-file=/etc/asistencia/backend.env /opt/asistencia/scripts/init-db.js
+
+  # Iniciar la API como servicio del sistema.
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, asistencia]
+{% else %}
+  - 'echo "Indica cliente o backend en __ROL__." >&2'
+  - [exit, '1']
+{% endif %}
+  - [rm, -rf, /run/asistencia]

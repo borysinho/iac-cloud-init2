@@ -1,0 +1,17 @@
+@startuml arquitectura_simple
+title Arquitectura del sistema de control de asistencia
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+component "Presentación" as Presentacion #EAF2FF
+component "Negocio" as Negocio #EAF8EF
+component "Datos" as Datos #FFF3DE
+database "Base de datos\nMySQL" as BD #FFF3DE
+
+Presentacion --> Negocio : HTTP / API
+Negocio --> Datos : Operaciones de persistencia
+Datos --> BD : SQL
+
+@enduml
